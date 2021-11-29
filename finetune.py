@@ -23,9 +23,9 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 data_path = '../Jeonbuk_Univ/Alzheimer_segmented_Recognition'
 
 # training config-----------------------
-NUM_EPOCHS = 5
+NUM_EPOCHS = 100
+GPUS = 4
 BATCH_SIZE = 3
-# BATCH_SIZE = 8
 LEARNING_RATE = 1e-4
 NUM_WARMUP_STEPS = 500
 OUTPUT_DIR = './jb-xlsr-large-alz+sch/'
@@ -71,13 +71,11 @@ class JBDataset(Dataset):
         return batch
         
     def __len__(self):
-        # return len(self.alz_lines)
         return len(self.alz_lines) + len(self.sch_lines)
 
 class W2V2Finetune(LightningModule):
     def __init__(self, 
                 data_path=data_path, 
-                checkpoint=CHECKPOINT, 
                 learning_rate=LEARNING_RATE,
                 batch_size=BATCH_SIZE,
                 ):
@@ -92,7 +90,7 @@ class W2V2Finetune(LightningModule):
         self.wer_metric = load_metric("wer")
         self.cer_metric = load_metric("cer")
 
-        # Load XLSR Model
+        # Load Model
         self.model = Wav2Vec2ForSpeechClassification.from_pretrained(
             "m3hrdadfi/wav2vec2-base-100k-voxpopuli-gtzan-music",
             gradient_checkpointing=True,
@@ -104,40 +102,14 @@ class W2V2Finetune(LightningModule):
         self.steps = 0
         self.best_eval_loss = 100
 
-        if checkpoint is not None:
-            self.resume(checkpoint)
-
-    def speech_file_to_array_fn(path, sampling_rate):
-        speech_array, sampling_rate = torchaudio.load(path)
-        resampler = torchaudio.transforms.Resample(sampling_rate)
-        speech
-
-    def resume(self, checkpoint):
-        if os.path.isfile(checkpoint):
-            print(f"=> loading checkpoint '{checkpoint}'")
-            checkpoint = torch.load(checkpoint)
-            self.steps = checkpoint['steps']
-            self.best_eval_loss = checkpoint['best_eval_loss']
-            self.model.load_state_dict(checkpoint['state_dict'])
-            print(f"=> loaded checkpoint '{checkpoint}' at steps {self.steps})")
-        else:
-            print(f"=> no checkpoint found at '{checkpoint}'")
-
     def forward(self, **batch):
         return self.model(**batch)
 
     def training_step(self, batch, batch_idx):
-        try:
-            outputs = self(**batch)
-            # loss = outputs.loss
-            loss = outputs['loss']
-            # self.log("t_loss", loss, on_epoch=True, prog_bar=True)
-
-        except Exception as e:
-            print(batch['input_values'].shape[-1])
-            print(batch['labels'])
-            print(e)
-            return None
+        outputs = self(**batch)
+        # loss = outputs.loss
+        loss = outputs['loss']
+        # self.log("t_loss", loss, on_epoch=True, prog_bar=True)
 
         return loss
 
@@ -187,15 +159,7 @@ class W2V2Finetune(LightningModule):
 
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), lr=self.hparams.learning_rate)
-        # optimizer = Adafactor(self.parameters(), lr=self.hparams.learning_rate)
-        # lr_scheduler = get_scheduler(
-        #     "linear",
-        #     optimizer=optimizer,
-        #     num_warmup_steps=num_warmup_steps,
-        #     num_training_steps=num_training_steps
-        # )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=8, factor=0.5, verbose=True)
-        # return optimizer
         return {
             "optimizer": optimizer, 
             "lr_scheduler": {
@@ -203,9 +167,6 @@ class W2V2Finetune(LightningModule):
                 "monitor": "v_loss",
             },
         }
-
-    # def configure_optimizers(self):
-    #     return FusedAdam(self.parameters())
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
@@ -227,10 +188,6 @@ class W2V2Finetune(LightningModule):
         self.test_data = JBDataset(self.hparams.data_path, 'test_ctrl', self.processor)
         return DataLoader(self.test_data, batch_size=self.hparams.batch_size+1, collate_fn=self.data_collator, num_workers=16)
 
-    # def test_dataloader(self):
-    #     eval_data = JBDataset(self.hparams.data_path, 'test_pati', self.processor)
-    #     return DataLoader(eval_data, batch_size=3, collate_fn=data_collator)
-
     def get_progress_bar_dict(self):
         tqdm_dict = super().get_progress_bar_dict()
         if 'v_num' in tqdm_dict:
@@ -241,7 +198,7 @@ if __name__ == '__main__':
     model = W2V2Finetune()
 
     if CHECKPOINT:
-        model = XLSRJB().load_from_checkpoint(CHECKPOINT)
+        model = model.load_from_checkpoint(CHECKPOINT)
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=OUTPUT_DIR,
@@ -261,48 +218,16 @@ if __name__ == '__main__':
     )
 
     trainer = Trainer(
-        gpus=4,
-        # gpus=[2],
+        gpus=GPUS,
         strategy="ddp",
-        # accelerator="cpu",
-        # strategy=DeepSpeedPlugin(stage=3, offload_optimizer=True, offload_parameters=True),
-        # strategy="deepspeed_stage_2_offload",
-        # plugins = [DDPPlugin(find_unused_parameters=False)],
         amp_backend="apex",
         amp_level="O2",
         precision=16,
-        # accumulate_grad_batches=4,
+        max_epochs=NUM_EPOCHS,
         sync_batchnorm=True,
         callbacks=[early_stopping, checkpoint_callback],
-        # auto_scale_batch_size = "binsearch",
-        # auto_lr_find=True
     )
-
-    # trainer = Trainer(
-    #     gpus=1,
-    #     # gpus=[2],
-    #     strategy="ddp",
-    #     # accelerator="cpu",
-    #     # strategy=DeepSpeedPlugin(stage=3, offload_optimizer=True, offload_parameters=True),
-    #     # strategy="deepspeed_stage_2",
-    #     amp_backend="apex",
-    #     amp_level="O2",
-    #     precision=16,
-    #     accumulate_grad_batches=4,
-    #     sync_batchnorm=True,
-    #     callbacks=[checkpoint_callback, early_stopping],
-    #     # auto_scale_batch_size = "binsearch",
-    #     # auto_lr_find=True
-    # )
-
-    # trainer.tune(model)
 
     trainer.fit(model)
 
     # trainer.test()
-
-    # Retrieve checkpoint after training
-    # checkpoint_callback = ModelCheckpoint(dirpath="my/path/")
-    # trainer = Trainer(callbacks=[checkpoint_callback])
-    # trainer.fit(model)
-    # checkpoint_callback.best_model_path
