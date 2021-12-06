@@ -32,6 +32,34 @@ OUTPUT_DIR = './jb-xlsr-large-alz+sch/'
 CHECKPOINT = None
 # --------------------------------------
 
+class Custom_GTZAN(Dataset):
+    def __init__(self, mode='train'):
+        
+        train_dataset = torchaudio.datasets.GTZAN('./GTZAN', download=True, subset='training')
+        val_dataset = torchaudio.datasets.GTZAN('./GTZAN', download=True, subset='validation')
+        test_dataset = torchaudio.datasets.GTZAN('./GTZAN', download=True, subset='testing')
+        
+        if mode == 'train':
+            self.original_dataset = train_dataset
+        elif mode == 'validation':
+            self.original_dataset = val_dataset
+        else:
+            self.original_dataset = test_dataset
+    
+    def __getitem__(self, n):
+        item = self.original_dataset[n]
+        resampled, sample_rate, label = self.data_resample(item)
+        batch = {'input values':resampled, 'labels':label}
+        return batch
+
+    def data_resample(self, data, sample_rate=16000):
+        resampler = torchaudio.transforms.Resample(data[1], sample_rate)
+        resampled = resampler(data[0])
+        return (resampled, sample_rate, data[2])
+        
+    def __len__(self):
+        return len(self.original_dataset)
+
 class JBDataset(Dataset):
     def __init__(self, data_path, split, processor):
         self.split = split
@@ -170,22 +198,22 @@ class W2V2Finetune(LightningModule):
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.train_data = JBDataset(self.hparams.data_path, 'train', self.processor)
-            self.eval_data = JBDataset(self.hparams.data_path, 'eval', self.processor)
+            self.train_data = Custom_GTZAN(mode='train')
+            self.eval_data = Custom_GTZAN(mode='validation')
         
         if stage == "test" or stage is None:
-            self.test_data = JBDataset(self.hparams.data_path, 'test_ctrl', self.processor)
+            self.test_data = Custom_GTZAN(mode='test')
 
     def train_dataloader(self):
-        self.train_data = JBDataset(self.hparams.data_path, 'train', self.processor)
+        self.train_data = Custom_GTZAN(mode='train')
         return DataLoader(self.train_data, batch_size=self.hparams.batch_size, collate_fn=self.data_collator, num_workers=16)
 
     def val_dataloader(self):
-        self.eval_data = JBDataset(self.hparams.data_path, 'eval', self.processor)
+        self.eval_data = Custom_GTZAN(mode='validation')
         return DataLoader(self.eval_data, batch_size=self.hparams.batch_size+1, collate_fn=self.data_collator, num_workers=16)
 
     def test_dataloader(self):
-        self.test_data = JBDataset(self.hparams.data_path, 'test_ctrl', self.processor)
+        self.test_data = Custom_GTZAN(mode='test')
         return DataLoader(self.test_data, batch_size=self.hparams.batch_size+1, collate_fn=self.data_collator, num_workers=16)
 
     def get_progress_bar_dict(self):
