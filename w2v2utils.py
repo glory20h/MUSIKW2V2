@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model
-from transformers import Wav2Vec2Processor
+from transformers import Wav2Vec2FeatureExtractor
 from transformers.file_utils import ModelOutput
 
 from dataclasses import dataclass, field
@@ -9,12 +9,12 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 
 
 @dataclass
-class DataCollatorCTCWithPadding:
+class DataCollatorWithPadding:
     """
     Data collator that will dynamically pad the inputs received.
     Args:
-        processor (:class:`~transformers.Wav2Vec2Processor`)
-            The processor used for proccessing the data.
+        feature_extractor (:class:`~transformers.Wav2Vec2FeatureExtractor`)
+            The feature_extractor used for proccessing the data.
         padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
             Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
             among:
@@ -34,7 +34,7 @@ class DataCollatorCTCWithPadding:
             7.5 (Volta).
     """
 
-    processor: Wav2Vec2Processor
+    feature_extractor: Wav2Vec2FeatureExtractor
     padding: Union[bool, str] = True
     max_length: Optional[int] = None
     max_length_labels: Optional[int] = None
@@ -42,31 +42,20 @@ class DataCollatorCTCWithPadding:
     pad_to_multiple_of_labels: Optional[int] = None
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lenghts and need
-        # different padding methods
-        input_features = [{"input_values": feature["input_values"]} for feature in features]
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
+        input_features = [{"input_values": feature["input_values"][0]} for feature in features]
+        label_features = [feature["labels"] for feature in features]
 
-        batch = self.processor.pad(
+        d_type = torch.long if isinstance(label_features[0], int) else torch.float
+
+        batch = self.feature_extractor.pad(
             input_features,
             padding=self.padding,
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )
-        with self.processor.as_target_processor():
-            labels_batch = self.processor.pad(
-                label_features,
-                padding=self.padding,
-                max_length=self.max_length_labels,
-                pad_to_multiple_of=self.pad_to_multiple_of_labels,
-                return_tensors="pt",
-            )
 
-        # replace padding with -100 to ignore loss correctly
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
-
-        batch["labels"] = labels
+        batch["labels"] = torch.tensor(label_features, dtype=d_type)
 
         return batch
 
