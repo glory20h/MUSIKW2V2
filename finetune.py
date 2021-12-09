@@ -11,6 +11,7 @@ from datasets import load_metric
 from w2v2utils import Wav2Vec2ForSpeechClassification, DataCollatorWithPadding
 
 from transformers import Wav2Vec2FeatureExtractor
+from transformers import Wav2Vec2Config
 from transformers import AdamW, get_scheduler
 
 from pytorch_lightning import LightningModule, Trainer
@@ -18,9 +19,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 # CONFIG ------------------------------
-# MODEL_NAME = "m3hrdadfi/wav2vec2-base-100k-gtzan-music-genres"
+MODEL_NAME = "m3hrdadfi/wav2vec2-base-100k-gtzan-music-genres"
 # MODEL_NAME = "facebook/wav2vec2-base-960h"
-MODEL_NAME = None
+# MODEL_NAME = None
 DATA_PATH = './'
 NUM_EPOCHS = 100
 BATCH_SIZE = 2
@@ -103,9 +104,10 @@ class W2V2Finetune(LightningModule):
                 gradient_checkpointing=True,
             )
         else:
-            self.model = Wav2Vec2ForSpeechClassification(
+            self.config = Wav2Vec2Config.from_pretrained(
                 gradient_checkpointing=True,
             )
+            self.model = Wav2Vec2ForSpeechClassification(self.config)
 
     def forward(self, **batch):
         return self.model(**batch)
