@@ -19,8 +19,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 # CONFIG ------------------------------
-MODEL_NAME = "m3hrdadfi/wav2vec2-base-100k-gtzan-music-genres"
-# MODEL_NAME = "facebook/wav2vec2-base-960h"
+# MODEL_NAME = "m3hrdadfi/wav2vec2-base-100k-gtzan-music-genres"
+MODEL_NAME = "facebook/wav2vec2-base-960h"
 # MODEL_NAME = None
 DATA_PATH = './'
 NUM_EPOCHS = 100
@@ -28,6 +28,7 @@ BATCH_SIZE = 2
 GPUS = 2
 LEARNING_RATE = 1e-5
 NUM_WARMUP_STEPS = 500
+POOLING_MODE = "mean" # "mean", "sum", "max"
 ACCUMULATE_GRAD_BATCHES = 1
 OUTPUT_DIR = './results/'
 # CHECKPOINT = 'last.ckpt'
@@ -100,14 +101,41 @@ class W2V2Finetune(LightningModule):
 
         if MODEL_NAME:
             self.model = Wav2Vec2ForSpeechClassification.from_pretrained(
-                model_name,
+                MODEL_NAME,
                 gradient_checkpointing=True,
+                problem_type="single_label_classification",
+                id2label={
+                    "0": "blues",
+                    "1": "classical",
+                    "2": "country",
+                    "3": "disco",
+                    "4": "hiphop",
+                    "5": "jazz",
+                    "6": "metal",
+                    "7": "pop",
+                    "8": "reggae",
+                    "9": "rock"
+                },
+                label2id={
+                    "blues": 0,
+                    "classical": 1,
+                    "country": 2,
+                    "disco": 3,
+                    "hiphop": 4,
+                    "jazz": 5,
+                    "metal": 6,
+                    "pop": 7,
+                    "reggae": 8,
+                    "rock": 9
+                },
             )
         else:
             self.config = Wav2Vec2Config.from_pretrained(
                 gradient_checkpointing=True,
             )
             self.model = Wav2Vec2ForSpeechClassification(self.config)
+
+        self.model.pooling_mode = POOLING_MODE
 
     def forward(self, **batch):
         return self.model(**batch)
