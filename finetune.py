@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import torch
 import torchaudio
+import glob
 from torch.utils.data import Dataset, DataLoader
 
 from datasets import load_metric
@@ -73,6 +74,39 @@ class Custom_GTZAN(Dataset):
         
     def __len__(self):
         return len(self.original_dataset)
+
+class GTZAN2(Dataset):   # GTZAN speech/music classification
+    def __init__(self, path, train=True):
+        self.path = path
+        if train:
+            self.music_path = path + '/music_wav/train'
+            self.speech_path = path + '/speech_wav/train'
+        else:
+            self.music_path = path + '/music_wav/test'
+            self.speech_path = path + '/speech_wav/test'
+    
+        self.music_file_list = glob.glob(self.music_path + '/*.wav')
+        self.speech_file_list = glob.glob(self.speech_path + '/*.wav')
+        
+        self.data_list = self.music_file_list + self.speech_file_list
+        self.label_list = [0] * len(self.music_file_list) + [1] * len(self.speech_file_list)
+    
+    def __len__(self):
+        return len(self.data_list)
+    
+    def __getitem__(self, index):
+        wav_path = self.data_list[index]
+        label = self.label_list[index]
+        waveform, sr = torchaudio.load(wav_path)
+        data = (waveform, sr)
+        resampled, sr = self.data_resample(data)
+        batch = {'input_values': resampled, 'labels': label}
+        return batch
+    
+    def data_resample(self, data, sample_rate=16000):
+        resampler = torchaudio.transforms.Resample(data[1], sample_rate)
+        resampled = resampler(data[0])
+        return resampled, sample_rate
 
 class W2V2Finetune(LightningModule):
     def __init__(self, 
