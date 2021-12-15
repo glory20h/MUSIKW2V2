@@ -3,6 +3,7 @@ import re
 import logging
 import numpy as np
 import torch
+import torch.nn as nn
 import torchaudio
 import glob
 from torch.utils.data import Dataset, DataLoader
@@ -20,12 +21,14 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 # CONFIG ------------------------------
-# MODEL_NAME = "m3hrdadfi/wav2vec2-base-100k-gtzan-music-genres"
-MODEL_NAME = "facebook/wav2vec2-base-960h"
+MODEL_NAME = "m3hrdadfi/wav2vec2-base-100k-gtzan-music-genres"
+# MODEL_NAME = "facebook/wav2vec2-base-960h"
 # MODEL_NAME = None
 DATA_PATH = './'
+DATASET = "gtzan"
+# DATASET = "gtzan2"
 NUM_EPOCHS = 100
-BATCH_SIZE = 2
+BATCH_SIZE = 4
 GPUS = 2
 LEARNING_RATE = 1e-5
 NUM_WARMUP_STEPS = 500
@@ -33,6 +36,7 @@ POOLING_MODE = "mean" # "mean", "sum", "max"
 ACCUMULATE_GRAD_BATCHES = 1
 OUTPUT_DIR = './results/'
 # CHECKPOINT = 'last.ckpt'
+# CHECKPOINT = 'checkpoint-epoch=32.ckpt'
 CHECKPOINT = None
 TEST = False
 # --------------------------------------
@@ -76,23 +80,20 @@ class Custom_GTZAN(Dataset):
         return len(self.original_dataset)
 
 class GTZAN2(Dataset):   # GTZAN speech/music classification
-    def __init__(self, path, train=True):
-        self.path = path
+    def __init__(self, data_path, train=True):
+        self.path = data_path + 'music_speech'
         if train:
-            self.music_path = path + '/music_wav/train'
-            self.speech_path = path + '/speech_wav/train'
+            self.music_path = self.path + '/music_wav/train'
+            self.speech_path = self.path + '/speech_wav/train'
         else:
-            self.music_path = path + '/music_wav/test'
-            self.speech_path = path + '/speech_wav/test'
+            self.music_path = self.path + '/music_wav/test'
+            self.speech_path = self.path + '/speech_wav/test'
     
         self.music_file_list = glob.glob(self.music_path + '/*.wav')
         self.speech_file_list = glob.glob(self.speech_path + '/*.wav')
         
         self.data_list = self.music_file_list + self.speech_file_list
         self.label_list = [0] * len(self.music_file_list) + [1] * len(self.speech_file_list)
-    
-    def __len__(self):
-        return len(self.data_list)
     
     def __getitem__(self, index):
         wav_path = self.data_list[index]
@@ -107,6 +108,9 @@ class GTZAN2(Dataset):   # GTZAN speech/music classification
         resampler = torchaudio.transforms.Resample(data[1], sample_rate)
         resampled = resampler(data[0])
         return resampled, sample_rate
+
+    def __len__(self):
+        return len(self.data_list)
 
 class W2V2Finetune(LightningModule):
     def __init__(self, 
@@ -138,36 +142,19 @@ class W2V2Finetune(LightningModule):
                 MODEL_NAME,
                 gradient_checkpointing=True,
                 problem_type="single_label_classification",
-                id2label={
-                    "0": "blues",
-                    "1": "classical",
-                    "2": "country",
-                    "3": "disco",
-                    "4": "hiphop",
-                    "5": "jazz",
-                    "6": "metal",
-                    "7": "pop",
-                    "8": "reggae",
-                    "9": "rock"
-                },
-                label2id={
-                    "blues": 0,
-                    "classical": 1,
-                    "country": 2,
-                    "disco": 3,
-                    "hiphop": 4,
-                    "jazz": 5,
-                    "metal": 6,
-                    "pop": 7,
-                    "reggae": 8,
-                    "rock": 9
-                },
+                num_labels = 10,
             )
         else:
-            self.config = Wav2Vec2Config.from_pretrained(
+            self.config = Wav2Vec2Config(
                 gradient_checkpointing=True,
+                problem_type="single_label_classification",
+                num_labels = 10,
             )
             self.model = Wav2Vec2ForSpeechClassification(self.config)
+
+        if DATASET == "gtzan2":
+            self.model.classifier.out_proj = nn.Linear(self.model.classifier.out_proj.in_features, 2)
+            self.model.num_labels = 2
 
         self.model.pooling_mode = POOLING_MODE
 
@@ -226,23 +213,28 @@ class W2V2Finetune(LightningModule):
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.train_data = Custom_GTZAN(data_path=DATA_PATH, mode='train')
-            self.eval_data = Custom_GTZAN(data_path=DATA_PATH, mode='validation')
+            if DATASET == "gtzan":
+                self.train_data = Custom_GTZAN(data_path=DATA_PATH, mode='train')
+                self.eval_data = Custom_GTZAN(data_path=DATA_PATH, mode='validation')
+            elif DATASET == "gtzan2":
+                self.train_data = GTZAN2(data_path=DATA_PATH, train=True)
+                self.eval_data = GTZAN2(data_path=DATA_PATH, train=False)
         
         if stage == "test" or stage is None:
-            self.test_data = Custom_GTZAN(data_path=DATA_PATH, mode='test')
+            if DATASET == "gtzan":
+                self.test_data = Custom_GTZAN(data_path=DATA_PATH, mode='test')
+            elif DATASET == "gtzan2":
+                self.test_data = GTZAN2(data_path=DATA_PATH, train=False)
 
     def train_dataloader(self):
-        self.train_data = Custom_GTZAN(data_path=DATA_PATH, mode='train')
-        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, collate_fn=self.data_collator, num_workers=GPUS*4)
+        # Check if shuffle is valid
+        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, collate_fn=self.data_collator, shuffle=True, num_workers=GPUS*4)
 
     def val_dataloader(self):
-        self.eval_data = Custom_GTZAN(data_path=DATA_PATH, mode='validation')
-        return DataLoader(self.eval_data, batch_size=self.hparams.batch_size+1, collate_fn=self.data_collator, num_workers=GPUS*4)
+        return DataLoader(self.eval_data, batch_size=self.hparams.batch_size, collate_fn=self.data_collator, num_workers=GPUS*4)
 
     def test_dataloader(self):
-        self.test_data = Custom_GTZAN(data_path=DATA_PATH, mode='test')
-        return DataLoader(self.test_data, batch_size=self.hparams.batch_size+1, collate_fn=self.data_collator, num_workers=GPUS*4)
+        return DataLoader(self.test_data, batch_size=self.hparams.batch_size, collate_fn=self.data_collator, num_workers=GPUS*4)
 
     def get_progress_bar_dict(self):
         tqdm_dict = super().get_progress_bar_dict()
@@ -252,7 +244,7 @@ class W2V2Finetune(LightningModule):
 
 if __name__ == '__main__':
     if CHECKPOINT:
-        model = W2V2Finetune.load_from_checkpoint(OUTPUT_DIR + CHECKPOINT)
+        model = W2V2Finetune().load_from_checkpoint(OUTPUT_DIR + CHECKPOINT)
     else:
         model = W2V2Finetune()
 
@@ -262,15 +254,15 @@ if __name__ == '__main__':
         verbose=True,
         save_last=True,
         save_top_k=3,
-        monitor="v_loss",
-        mode='min'
+        monitor="acc",
+        mode='max'
     )
 
     early_stopping = EarlyStopping(
-        monitor='v_loss',
+        monitor='acc',
         patience=15,
         verbose=True,
-        mode='min'
+        mode='max'
     )
 
     trainer = Trainer(
@@ -285,7 +277,7 @@ if __name__ == '__main__':
     )
 
     if TEST:
-        trainer.test(ckpt_path=OUTPUT_DIR + CHECKPOINT)
+        trainer.test(model)
     else:
         trainer.fit(model)
 
