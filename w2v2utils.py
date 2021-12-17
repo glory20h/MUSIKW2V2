@@ -91,16 +91,9 @@ class Wav2Vec2ForSpeechClassification(Wav2Vec2PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
-        self.pooling_mode = config.pooling_mode
+        # self.pooling_mode = config.pooling_mode if config.pooling_mode is not None else "mean"
+        self.pooling_mode = "mean"
         self.config = config
-
-        if self.config.problem_type is None:
-            if self.num_labels == 1:
-                self.config.problem_type = "regression"
-            elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                self.config.problem_type = "single_label_classification"
-            else:
-                self.config.problem_type = "multi_label_classification"
 
         self.wav2vec2 = Wav2Vec2Model(config)
         self.classifier = Wav2Vec2ClassificationHead(config)
@@ -144,6 +137,13 @@ class Wav2Vec2ForSpeechClassification(Wav2Vec2PreTrainedModel):
 
         loss = None
         if labels is not None:
+            if self.config.problem_type is None:
+                if self.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
             if self.config.problem_type == "regression":
                 loss_fc = nn.MSELoss()
                 loss = loss_fc(logits.view(-1, self.num_labels), labels)
@@ -164,4 +164,3 @@ class Wav2Vec2ForSpeechClassification(Wav2Vec2PreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
