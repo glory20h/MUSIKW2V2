@@ -110,6 +110,41 @@ class GTZAN2(Dataset):   # GTZAN speech/music classification
         resampled = resampler(data[0])
         return resampled, sample_rate
 
+class UrbanSound(Dataset):
+    def __init__(self, protocol_path, mode='train'):
+        #self.path = path
+        self.protocol_path = protocol_path   # protocol path
+        
+        tmp = np.random.permutation(10) + 1
+        train_fold = tmp[0:9]
+        test_fold = tmp[9:]
+        metadata = pd.read_csv(self.protocol_path)
+        mask1 = metadata.fold != test_fold[0]
+        mask2 = metadata.fold == test_fold[0]      
+        
+        if mode == 'train':
+            self.df = metadata.loc[mask1, :]
+        elif mode == 'test':
+            self.df = metadata.loc[mask2, :]
+    
+    def __len__(self):
+        return len(self.df.axes[0])
+    
+    def __getitem__(self, index):
+        num_folder = self.df.fold[index]
+        file_name = self.df.slice_file_name[index]
+        label = self.df.classID[index]
+        file_path = "./Urbansound8k/fold" + str(num_folder) + "/" + file_name   # data path
+        audio = torchaudio.load(file_path)
+        resampled, sample_rate = self.data_resample(audio)
+        batch = {'input_values': resampled, 'labels': label}
+        return batch
+    
+    def data_resample(self, data, sample_rate=16000):
+        resampler = torchaudio.transforms.Resample(data[1], sample_rate)
+        resampled = resampler(data[0])
+        return resampled, sample_rate
+
 class W2V2Finetune(LightningModule):
     def __init__(self, 
                 model_name=MODEL_NAME,
